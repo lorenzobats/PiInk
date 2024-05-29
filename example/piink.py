@@ -38,16 +38,6 @@ display.epd.Clear()
 Himage = Image.new('1', (display.epd.width, display.epd.height), 255)  # 255: clear the frame
 draw = ImageDraw.Draw(Himage)
 display.epd.init_part()
-class CustomHTTPServer(socketserver.TCPServer):
-    font24: ImageFont
-    font18: ImageFont
-    epd: epd7in5_V2.EPD
-    state: Display
-
-    def __init_(self, server_address, RequestHandlerClass, state):
-        super().__init__(server_address, RequestHandlerClass)
-        print(state)
-        self.state = state
 
 class SimpleHTTPRequestHandle(http.server.SimpleHTTPRequestHandler):
 
@@ -66,7 +56,7 @@ class SimpleHTTPRequestHandle(http.server.SimpleHTTPRequestHandler):
         display.epd.display_Partial(display.epd.getbuffer(Himage), 0, 0, display.epd.width, display.epd.height)
 
 
-with CustomHTTPServer(("", PORT), SimpleHTTPRequestHandle, Display()) as httpd:
+with socketserver.TCPServer(("", PORT), SimpleHTTPRequestHandle) as httpd:
     print(f"Serving on Port {PORT}")
     httpd.serve_forever()
 
