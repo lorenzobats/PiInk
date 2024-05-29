@@ -4,7 +4,7 @@ import sys
 import os
 picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
 libdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
-print(libdir)
+
 if os.path.exists(libdir):
     sys.path.append(libdir)
 
@@ -15,29 +15,61 @@ from PIL import Image,ImageDraw,ImageFont
 import traceback
 import http.server
 import socketserver
+from enum import Enum
 
 
 logging.basicConfig(level=logging.DEBUG)
 PORT = 8080
 
+class DisplayMode(Enum):
+    # Multiple Display Refreshes
+    # The display needs to be fully refreshed at least once a day.
+    FULL = 0
+    # Single Display Refresh
+    # Probably most useful if the whole screen needs to be invalidated anyway.
+    FAST = 1
+    # Partial Display Refresh
+    # Refreshes a region on the display as is the case for updating the UI.        
+    PARTIAL = 2
+
 
 class Display:
-    def __init__(self):
-        epd = epd7in5_V2.EPD()
-        print("init and Clear")
-        # epd.init()
-        # epd.Clear()
+    epd: epd7in5_V2.EPD
+    image: Image
 
+    def __init__(self):
+        self.epd = epd7in5_V2.EPD()
+        self.image = Image.new("1", (self.epd.width, self.epd.height), 255)
         self.font24 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
         self.font18 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 18)
-        self.epd = epd
+
+    def set_mode(self, mode: DisplayMode):
+        match mode:
+            case DisplayMode.FULL:
+                self.epd.init()
+            case DisplayMode.FAST:
+                self.epd.init_fast()
+            case DisplayMode.PARTIAL:
+                self.epd.init_part()
+            case _:
+                pass
+
+    def draw(self):
+        return ImageDraw.Draw(self.image)
+
+    def display(self):
+        self.epd.display(self.epd.getbuffer(self.image))
+
+    def display_partial(self, x: int, y: int, width: int, height: int):
+        self.epd.display_Partial(self.epd.getbuffer(self.image), x, y, width, height)
+
+    def clear(self):
+        self.epd.Clear()
 
 display = Display()
-display.epd.init()
-display.epd.Clear()
-Himage = Image.new('1', (display.epd.width, display.epd.height), 255)  # 255: clear the frame
-draw = ImageDraw.Draw(Himage)
-display.epd.init_part()
+display.set_mode(DisplayMode.FULL)
+display.clear()
+display.set_mode(DisplayMode.PARTIAL)
 
 class SimpleHTTPRequestHandle(http.server.SimpleHTTPRequestHandler):
 
@@ -45,15 +77,15 @@ class SimpleHTTPRequestHandle(http.server.SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        # print(self.server)
-        # display = self.server.state
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         response = f"POST received {post_data.decode('utf-8')}"
         self.wfile.write(response.encode('utf-8'))
+
+        draw = display.draw()
         draw.rectangle((10, 10, 200, 70), fill = 255)
         draw.text((10, 10), post_data.decode('utf-8'), font = display.font24, fill = 0)
-        display.epd.display_Partial(display.epd.getbuffer(Himage), 0, 0, display.epd.width, display.epd.height)
+        display.display_partial(0, 0, display.epd.width, display.epd.height)
 
 
 with socketserver.TCPServer(("", PORT), SimpleHTTPRequestHandle) as httpd:
