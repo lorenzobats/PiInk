@@ -16,6 +16,9 @@ import traceback
 import http.server
 import socketserver
 from enum import Enum
+import asyncio
+from aiohttp import web
+from typing import NamedTuple, Any
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -32,6 +35,8 @@ class DisplayMode(Enum):
     # Refreshes a region on the display as is the case for updating the UI.        
     PARTIAL = 2
 
+# FIXME: Remove once font dictionaries are stored in the UI state
+ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
 
 class Display:
     epd: epd7in5_V2.EPD
@@ -65,6 +70,96 @@ class Display:
 
     def clear(self):
         self.epd.Clear()
+
+class Message(NamedTuple):
+    type: str
+    data: Any
+
+class EventCtx:
+    def request_paint(self):
+        pass
+
+    def request_animation(self, delay_in_seconds: float):
+        pass
+
+class Greeter:
+    name: str = ""
+
+    def event(self, ctx: EventCtx, message: Message):
+        match message.type:
+            case "update":
+                self.name = message.data               
+                ctx.request_paint()
+            case _:
+                pass
+
+    def paint(self, ctx: ImageDraw, size: (int, int)):
+        (width, height) = size
+        ctx.rectangle((0, 0, width, height), fill = 255)
+        ctx.text((0, 0), f"Hallo {self.name}!", font_size = 24, fill = 0)
+
+
+class Clock:
+    def event(self, ctx, message):
+        match message.type:
+            case "animation":               
+                ctx.request_paint()
+                ctx.request_animation(1000)
+            case _:
+                pass
+
+    def paint(self, ctx: ImageDraw, size: (int, int)):
+        (width, height) = size
+        draw.rectangle((0, 0, width, height), fill = 255)
+        draw.text((0, 0), time.strftime('%H:%M'), font_size = 24, fill = 0)
+
+
+async def ui_handler(event_queue: asyncio.Queue):
+    display = Display()
+    display.set_mode(DisplayMode.FULL)
+    display.clear()
+    display.set_mode(DisplayMode.PARTIAL)
+    greeter = Greeter()
+
+    while True:
+        event = await event_queue.get()
+        greeter.event(EventCtx(), Message(type="update", data=event))
+        greeter.paint(display.draw(), (display.epd.width, display.epd.height))
+        display.display_partial(0, 0, display.epd.width, display.epd.height)
+        event_queue.task_done()
+
+async def web_server(event_queue: asyncio):
+    async def index(request):
+        return web.Response(text='PiInk')
+
+    async def hello(request: web.Request):
+        name = await request.text()
+        await event_queue.put(name)
+        return web.Response(text=f"Post received {name}")
+
+    app = web.Application()
+    app.add_routes([web.get("/", index), web.post("/", hello)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host=None, port=PORT)
+    await site.start()
+    print(f"======== Running on {site.name} ========")
+
+    await event_queue.put("Welt")
+
+    # wait forever
+    await asyncio.Event().wait()
+
+async def main():
+    event_queue = asyncio.Queue(maxsize=2)
+
+    server_task = asyncio.create_task(web_server(event_queue))
+    ui_task = asyncio.create_task(ui_handler(event_queue))
+
+    await server_task
+    await ui_task
+
+asyncio.run(main())
 
 display = Display()
 display.set_mode(DisplayMode.FULL)
