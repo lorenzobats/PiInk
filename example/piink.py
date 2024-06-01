@@ -40,7 +40,7 @@ class DisplayMode(Enum):
 ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
 
 @dataclass(slots=True)
-class Display(NamedTuple):
+class Display:
     epd: epd7in5_V2.EPD
     image: Image
 
@@ -97,7 +97,7 @@ class EventCtx:
         self.changed = True
 
     def spawn_task(self, coroutine: Coroutine[None, None, Any]):
-        def dispatch_action(event_queue: asyncio.Queue, widget_id: int, task_id: int):
+        async def dispatch_action(event_queue: asyncio.Queue, widget_id: int, task_id: int):
             result = await coroutine
             await event_queue.put(Event(kind=EventKind.TASK, target=widget_id, data=(task_id, result)))
 
@@ -130,8 +130,7 @@ class Greeter:
 class Clock:
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
-            case EventKind.ADDED:
-            case EventKind.UPDATE:
+            case EventKind.ADDED | EventKind.UPDATE:
                 ctx.mark_changed()
                 ctx.spawn_task(asyncio.sleep(60 - min(time.localtime().tm_sec), 60))
             case _:
@@ -154,7 +153,7 @@ async def ui_handler(event_queue: asyncio.Queue):
     while True:
         event = await event_queue.get()
 
-        message = Message(kind=EventKind.UPDATE, data=event)
+        message = Message(kind=EventKind.UPDATE, data=event.data)
         greeter.update(ctx, message)
 
         if ctx.changed:
@@ -168,7 +167,7 @@ async def web_server(event_queue: asyncio):
 
     async def hello(request: web.Request):
         name = await request.text()
-        await event_queue.put(name)
+        await event_queue.put(Event(kind=EventKind.UPDATE, target=None, data=name))
         return web.Response(text=f"Post received {name}")
 
     app = web.Application()
