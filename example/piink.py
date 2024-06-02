@@ -62,9 +62,11 @@ class Display:
     def buffer(self, x: int, y: int, width: int, height: int) -> Image:
         return self.image.crop((x, y, x + width, y + height))
 
-    def render(self, x: int, y: int, buffer: Image):
+    def draw(self, x: int, y: int, buffer: Image):
         self.image.paste(buffer, (x, y))
-        self.epd.display_Partial(self.epd.getbuffer(self.image), x, y, x + buffer.width, y + buffer.height)
+
+    def show(self, x: int, y: int, width: int, height: int):
+        self.epd.display_Partial(self.epd.getbuffer(self.image), x, y, x + width, y + height)
 
     def clear(self):
         self.epd.Clear()
@@ -73,6 +75,7 @@ class EventKind(Enum):
     ADDED = 0
     UPDATE = 1
     TASK = 2
+    REMOVED = 3
 
 class Event(NamedTuple):
     kind: EventKind
@@ -107,7 +110,7 @@ class EventCtx:
 
 @dataclass(slots=True)
 class Greeter:
-    name: str = ""
+    name: str = "Welt"
 
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
@@ -128,9 +131,9 @@ class Greeter:
 class Clock:
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
-            case EventKind.ADDED | EventKind.UPDATE:
+            case EventKind.ADDED | EventKind.TASK:
                 ctx.mark_changed()
-                ctx.spawn_task(asyncio.sleep(60 - min(time.localtime().tm_sec), 60))
+                ctx.spawn_task(asyncio.sleep(60 - min(time.localtime().tm_sec, 60)))
             case _:
                 pass
 
@@ -139,28 +142,64 @@ class Clock:
         ctx.rectangle((0, 0, width, height), fill = 255)
         ctx.text((0, 0), time.strftime('%H:%M'), font_size = 24, fill = 0)
 
-
 async def ui_handler(event_queue: asyncio.Queue):
     display = Display()
     display.set_mode(DisplayMode.FULL)
     display.clear()
-    display.set_mode(DisplayMode.PARTIAL)
+
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
-    greeter = Greeter()
+    widgets: dict[int, (Any, (int, int, int, int))] = dict([
+        (0, (Clock(), (0, 0, 800, 160))),
+        (1, (Greeter(), (0, 160, 800, 320)))
+    ])
+
+    for (widget_id, (widget, (x, y, width, height))) in widgets.items():
+        message = Message(kind=EventKind.ADDED, data=None)
+        ctx.widget_id = widget_id
+        widget.update(ctx, message)
+        buffer = display.buffer(x, y, width, height)
+        widget.view(ImageDraw.Draw(buffer), (width, height))
+        display.draw(x, y, buffer)
+
+    display.set_mode(DisplayMode.PARTIAL)
+    display.show(0, 0, display.epd.width, display.epd.height)
+    ctx.widget_id = None
+    ctx.changed = False
 
     while True:
         event = await event_queue.get()
 
-        message = Message(kind=EventKind.UPDATE, data=event.data)
-        greeter.update(ctx, message)
+        match event.kind:
+            case EventKind.ADDED:
+                # TODO: Dynamically add widgets.
+                pass
+            case EventKind.REMOVED:
+                # TODO: Widgets currently make no use of as data is stored in
+                # memory. In the future it should be used to clean up
+                # resources like files.
+                pass
+            case EventKind.TASK:
+                del ctx.scheduled_tasks[(event.target, event.data[0])]
+                
+        value = widgets.get(event.target)
+
+        if value == None:
+            continue
+
+        (widget, (x, y, width, height)) = value
+        message = Message(kind=event.kind, data=event.data)
+        ctx.widget_id = event.target
+        widget.update(ctx, message)
 
         if ctx.changed:
-            width = 800
-            height = 160
-            buffer = display.buffer(0, 0, width, height)
-            greeter.view(ImageDraw.Draw(buffer), (width, height))
-            display.render(0, 0, buffer)
-            ctx.changed = False
+            buffer = display.buffer(x, y, width, height)
+            widget.view(ImageDraw.Draw(buffer), (width, height))
+            display.draw(x, y, buffer)
+            display.show(x, y, width, height)
+
+        ctx.widget_id = None
+        ctx.changed = False
+
 
 async def web_server(event_queue: asyncio):
     async def index(request):
@@ -168,7 +207,7 @@ async def web_server(event_queue: asyncio):
 
     async def hello(request: web.Request):
         name = await request.text()
-        await event_queue.put(Event(kind=EventKind.UPDATE, target=None, data=name))
+        await event_queue.put(Event(kind=EventKind.UPDATE, target=1, data=name))
         return web.Response(text=f"Post received {name}")
 
     app = web.Application()
