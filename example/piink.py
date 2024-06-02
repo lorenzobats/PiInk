@@ -59,14 +59,12 @@ class Display:
             case _:
                 pass
 
-    def draw(self):
-        return ImageDraw.Draw(self.image)
+    def buffer(self, x: int, y: int, width: int, height: int) -> Image:
+        return self.image.crop((x, y, x + width, y + height))
 
-    def display(self):
-        self.epd.display(self.epd.getbuffer(self.image))
-
-    def display_partial(self, x: int, y: int, width: int, height: int):
-        self.epd.display_Partial(self.epd.getbuffer(self.image), x, y, width, height)
+    def render(self, x: int, y: int, buffer: Image):
+        self.image.paste(buffer, (x, y))
+        self.epd.display_Partial(self.epd.getbuffer(self.image), x, y, x + buffer.width, y + buffer.height)
 
     def clear(self):
         self.epd.Clear()
@@ -157,8 +155,11 @@ async def ui_handler(event_queue: asyncio.Queue):
         greeter.update(ctx, message)
 
         if ctx.changed:
-            greeter.view(display.draw(), (display.epd.width, display.epd.height))
-            display.display_partial(0, 0, display.epd.width, display.epd.height)
+            width = 800
+            height = 160
+            buffer = display.buffer(0, 0, width, height)
+            greeter.view(ImageDraw.Draw(buffer), (width, height))
+            display.render(0, 0, buffer)
             ctx.changed = False
 
 async def web_server(event_queue: asyncio):
@@ -184,8 +185,8 @@ async def web_server(event_queue: asyncio):
 async def main():
     event_queue = asyncio.Queue(maxsize=2)
 
-    server_task = asyncio.create_task(web_server(event_queue))
     ui_task = asyncio.create_task(ui_handler(event_queue))
+    server_task = asyncio.create_task(web_server(event_queue))
 
     await server_task
     await ui_task
