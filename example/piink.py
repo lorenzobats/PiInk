@@ -43,10 +43,12 @@ ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 
 class Display:
     epd: epd7in5_V2.EPD
     image: Image
+    buffer: bytearray
 
     def __init__(self):
         self.epd = epd7in5_V2.EPD()
         self.image = Image.new("1", (self.epd.width, self.epd.height), 255)
+        self.buffer = bytearray(len(self.image.tobytes()))
 
     def set_mode(self, mode: DisplayMode):
         match mode:
@@ -59,14 +61,19 @@ class Display:
             case _:
                 pass
 
-    def buffer(self, x: int, y: int, width: int, height: int) -> Image:
+    def slice(self, x: int, y: int, width: int, height: int) -> Image:
         return self.image.crop((x, y, x + width, y + height))
 
     def draw(self, x: int, y: int, buffer: Image):
         self.image.paste(buffer, (x, y))
 
-    def show(self, x: int, y: int, width: int, height: int):
-        self.epd.display_Partial(self.epd.getbuffer(self.image), x, y, x + width, y + height)
+    def show(self):
+        image_buffer = self.image.tobytes()
+
+        for i in range(0, len(self.buffer)):
+            self.buffer[i] = image_buffer[i] ^ 0xFF
+            
+        self.epd.display_Partial(self.buffer, 0, 0, self.epd.width, self.epd.height)
 
     def clear(self):
         self.epd.Clear()
@@ -157,12 +164,12 @@ async def ui_handler(event_queue: asyncio.Queue):
         message = Message(kind=EventKind.ADDED, data=None)
         ctx.widget_id = widget_id
         widget.update(ctx, message)
-        buffer = display.buffer(x, y, width, height)
-        widget.view(ImageDraw.Draw(buffer), (width, height))
-        display.draw(x, y, buffer)
+        image = display.slice(x, y, width, height)
+        widget.view(ImageDraw.Draw(image), (width, height))
+        display.draw(x, y, image)
 
     display.set_mode(DisplayMode.PARTIAL)
-    display.show(0, 0, display.epd.width, display.epd.height)
+    display.show()
     ctx.widget_id = None
     ctx.changed = False
 
@@ -192,10 +199,10 @@ async def ui_handler(event_queue: asyncio.Queue):
         widget.update(ctx, message)
 
         if ctx.changed:
-            buffer = display.buffer(x, y, width, height)
-            widget.view(ImageDraw.Draw(buffer), (width, height))
-            display.draw(x, y, buffer)
-            display.show(x, y, width, height)
+            image = display.slice(x, y, width, height)
+            widget.view(ImageDraw.Draw(image), (width, height))
+            display.draw(x, y, image)
+            display.show()
 
         ctx.widget_id = None
         ctx.changed = False
