@@ -39,8 +39,7 @@ class DisplayMode(Enum):
 # FIXME: Remove once font dictionaries are stored in the UI state
 ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
 
-@dataclass(slots=True)
-class Display:
+class Display(NamedTuple):
     epd: epd7in5_V2.EPD
     image: Image
 
