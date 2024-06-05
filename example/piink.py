@@ -43,12 +43,10 @@ ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 
 class Display:
     epd: epd7in5_V2.EPD
     image: Image
-    buffer: bytearray
 
     def __init__(self):
         self.epd = epd7in5_V2.EPD()
         self.image = Image.new("1", (self.epd.width, self.epd.height), 255)
-        self.buffer = bytearray(len(self.image.tobytes()))
 
     def set_mode(self, mode: DisplayMode):
         match mode:
@@ -64,16 +62,35 @@ class Display:
     def slice(self, x: int, y: int, width: int, height: int) -> Image:
         return self.image.crop((x, y, x + width, y + height))
 
-    def draw(self, x: int, y: int, buffer: Image):
-        self.image.paste(buffer, (x, y))
+    def draw(self, x: int, y: int, image: Image):
+        self.image.paste(image, (x, y))
 
-    def show(self):
-        image_buffer = self.image.tobytes()
+    def display(self):
+        buffer = bytearray(self.image.tobytes())
 
-        for i in range(0, len(self.buffer)):
-            self.buffer[i] = image_buffer[i] ^ 0xFF
+        for i in range(0, len(buffer)):
+            buffer[i] ^= 0xFF
             
-        self.epd.display_Partial(self.buffer, 0, 0, self.epd.width, self.epd.height)
+        self.epd.display(buffer)
+
+    def display_partial(self, x: int, y: int, width: int, height: int):
+        bytes = self.image.tobytes()
+
+        x0 = x // 8
+        x1 = (x + width + 7) // 8
+        y0 = y
+        y1 = y + height
+        scan_width = x1 - x0
+
+        buffer = bytearray(scan_width * height)
+
+        for i in range(0, height):
+            for j in range(0, scan_width):
+                image_pos = (y0 + i) * (self.epd.width // 8) + (x0 + j)
+                buffer_pos = i * scan_width + j
+                buffer[buffer_pos] = bytes[image_pos] ^ 0xFF
+
+        self.epd.display_Partial(buffer, x, y0, x + width, y1)
 
     def clear(self):
         self.epd.Clear()
@@ -152,7 +169,6 @@ class Clock:
 async def ui_handler(event_queue: asyncio.Queue):
     display = Display()
     display.set_mode(DisplayMode.FULL)
-    display.clear()
 
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
     widgets: dict[int, (Any, (int, int, int, int))] = dict([
@@ -168,8 +184,9 @@ async def ui_handler(event_queue: asyncio.Queue):
         widget.view(ImageDraw.Draw(image), (width, height))
         display.draw(x, y, image)
 
+    display.display()
+
     display.set_mode(DisplayMode.PARTIAL)
-    display.show()
     ctx.widget_id = None
     ctx.changed = False
 
@@ -202,7 +219,7 @@ async def ui_handler(event_queue: asyncio.Queue):
             image = display.slice(x, y, width, height)
             widget.view(ImageDraw.Draw(image), (width, height))
             display.draw(x, y, image)
-            display.show()
+            display.display_partial(x, y, width, height)
 
         ctx.widget_id = None
         ctx.changed = False
