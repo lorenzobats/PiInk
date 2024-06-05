@@ -11,10 +11,7 @@ if os.path.exists(libdir):
 import logging
 from waveshare_epd import epd7in5_V2
 import time
-from PIL import Image,ImageDraw,ImageFont
-import traceback
-import http.server
-import socketserver
+from PIL import Image, ImageDraw, ImageFont
 from enum import Enum
 import asyncio
 from aiohttp import web
@@ -42,10 +39,6 @@ ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 
 class Display(NamedTuple):
     epd: epd7in5_V2.EPD
     image: Image
-
-    def __init__(self):
-        self.epd = epd7in5_V2.EPD()
-        self.image = Image.new("1", (self.epd.width, self.epd.height), 255)
 
     def set_mode(self, mode: DisplayMode):
         match mode:
@@ -166,7 +159,7 @@ class Clock:
         ctx.text((0, 0), time.strftime('%H:%M'), font_size = 24, fill = 0)
 
 async def ui_handler(event_queue: asyncio.Queue):
-    display = Display()
+    display = Display(epd=epd7in5_V2.EPD(), image=Image.new("1", (800, 480), 255))
     display.set_mode(DisplayMode.FULL)
 
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
