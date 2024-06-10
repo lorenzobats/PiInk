@@ -144,6 +144,25 @@ class Greeter:
 
 
 @dataclass(slots=True)
+class Weather:
+    temperature: int = 12
+
+    def update(self, ctx: EventCtx, message: Message):
+        match message.kind:
+            case EventKind.ADDED | EventKind.TASK:
+                self.temperature = message.data
+                ctx.mark_changed()
+                ctx.spawn_task(asyncio.sleep(60 - min(time.localtime().tm_sec, 60)))
+            case _:
+                pass
+
+    def view(self, ctx: ImageDraw, size: (int, int)):
+        (width, height) = size
+        ctx.rectangle((400, 0, width, height), fill=255)
+        ctx.text((0, 0), f"Wetter: {self.temperature}", font_size=48, fill=0)
+
+
+@dataclass(slots=True)
 class Clock:
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
@@ -155,8 +174,9 @@ class Clock:
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill = 255)
-        ctx.text((0, 0), time.strftime('%H:%M'), font_size = 24, fill = 0)
+        ctx.rectangle((0, 0, width, height), fill=255)
+        ctx.text((0, 0), time.strftime('%H:%M'), font_size=24, fill=0)
+
 
 async def ui_handler(event_queue: asyncio.Queue):
     display = Display(epd=epd7in5_V2.EPD(), image=Image.new("1", (800, 480), 255))
@@ -165,7 +185,8 @@ async def ui_handler(event_queue: asyncio.Queue):
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
     widgets: dict[int, (Any, (int, int, int, int))] = dict([
         (0, (Clock(), (0, 0, 800, 160))),
-        (1, (Greeter(), (0, 160, 800, 320)))
+        (1, (Greeter(), (0, 160, 800, 320))),
+        (2, (Weather(), (400, 0, 200, 100)))
     ])
 
     for (widget_id, (widget, (x, y, width, height))) in widgets.items():
@@ -224,6 +245,7 @@ async def web_server(event_queue: asyncio):
     async def hello(request: web.Request):
         name = await request.text()
         await event_queue.put(Event(kind=EventKind.UPDATE, target=1, data=name))
+        await event_queue.put(Event(kind=EventKind.TASK, target=3, data=name))
         return web.Response(text=f"Post received {name}")
 
     app = web.Application()
