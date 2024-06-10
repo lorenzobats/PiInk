@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from enum import Enum
 import asyncio
 from aiohttp import web
+import aiohttp
 from typing import Any, Coroutine, NamedTuple, Optional
 from dataclasses import dataclass
 
@@ -145,21 +146,38 @@ class Greeter:
 
 @dataclass(slots=True)
 class Weather:
+    session: aiohttp.ClientSession = None
     temperature: int = 12
 
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
-            case EventKind.ADDED | EventKind.TASK:
+            case EventKind.ADDED:
+                self.session = aiohttp.ClientSession()
+                ctx.spawn_task(self.schedule_weather_update())
+                pass
+            case EventKind.TASK:
                 self.temperature = message.data
                 ctx.mark_changed()
-                ctx.spawn_task(asyncio.sleep(60 - min(time.localtime().tm_sec, 60)))
+                ctx.spawn_task(self.schedule_weather_update())
             case _:
                 pass
+
+    async def schedule_weather_update(self):
+        lat = 52.52
+        long = 13.4
+        appid = ''
+        endpoint = 'https://api.openweathermap.org/data/3.0/onecall'
+
+        await asyncio.sleep(10)
+        async with self.session.get(f'{endpoint}?lat={lat}&long={long}&appid={appid}') as response:
+            weather = await response.json()
+            print(weather)
+            return weather
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
         ctx.rectangle((400, 0, width, height), fill=255)
-        ctx.text((0, 0), f"Wetter: {self.temperature}", font_size=48, fill=0)
+        ctx.text((0, 0), f"Wetter: {self.temperature}", font_size=24, fill=0)
 
 
 @dataclass(slots=True)
@@ -217,10 +235,9 @@ async def ui_handler(event_queue: asyncio.Queue):
                 pass
             case EventKind.TASK:
                 del ctx.scheduled_tasks[(event.target, event.data[0])]
-                
-        value = widgets.get(event.target)
 
-        if value == None:
+        value = widgets.get(event.target)
+        if value is None:
             continue
 
         (widget, (x, y, width, height)) = value
