@@ -11,11 +11,12 @@ if os.path.exists(libdir):
 import logging
 from waveshare_epd import epd7in5_V2
 import time
-from PIL import Image,ImageDraw,ImageFont
-import traceback
-import http.server
-import socketserver
+from PIL import Image, ImageDraw, ImageFont
 from enum import Enum
+import asyncio
+from aiohttp import web
+from typing import Any, Coroutine, NamedTuple, Optional
+from dataclasses import dataclass
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -32,16 +33,12 @@ class DisplayMode(Enum):
     # Refreshes a region on the display as is the case for updating the UI.        
     PARTIAL = 2
 
+# FIXME: Remove once font dictionaries are stored in the UI state
+ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
 
-class Display:
+class Display(NamedTuple):
     epd: epd7in5_V2.EPD
     image: Image
-
-    def __init__(self):
-        self.epd = epd7in5_V2.EPD()
-        self.image = Image.new("1", (self.epd.width, self.epd.height), 255)
-        self.font24 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
-        self.font18 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 18)
 
     def set_mode(self, mode: DisplayMode):
         match mode:
@@ -54,134 +51,199 @@ class Display:
             case _:
                 pass
 
-    def draw(self):
-        return ImageDraw.Draw(self.image)
+    def slice(self, x: int, y: int, width: int, height: int) -> Image:
+        return self.image.crop((x, y, x + width, y + height))
+
+    def draw(self, x: int, y: int, image: Image):
+        self.image.paste(image, (x, y))
 
     def display(self):
-        self.epd.display(self.epd.getbuffer(self.image))
+        buffer = bytearray(self.image.tobytes())
+
+        for i in range(0, len(buffer)):
+            buffer[i] ^= 0xFF
+            
+        self.epd.display(buffer)
 
     def display_partial(self, x: int, y: int, width: int, height: int):
-        self.epd.display_Partial(self.epd.getbuffer(self.image), x, y, width, height)
+        bytes = self.image.tobytes()
+
+        x0 = x // 8
+        x1 = (x + width + 7) // 8
+        y0 = y
+        y1 = y + height
+        scan_width = x1 - x0
+
+        buffer = bytearray(scan_width * height)
+
+        for i in range(0, height):
+            for j in range(0, scan_width):
+                image_pos = (y0 + i) * (self.epd.width // 8) + (x0 + j)
+                buffer_pos = i * scan_width + j
+                buffer[buffer_pos] = bytes[image_pos] ^ 0xFF
+
+        self.epd.display_Partial(buffer, x, y0, x + width, y1)
 
     def clear(self):
         self.epd.Clear()
 
-display = Display()
-display.set_mode(DisplayMode.FULL)
-display.clear()
-display.set_mode(DisplayMode.PARTIAL)
+class EventKind(Enum):
+    ADDED = 0
+    UPDATE = 1
+    TASK = 2
+    REMOVED = 3
 
-class SimpleHTTPRequestHandle(http.server.SimpleHTTPRequestHandler):
+class Event(NamedTuple):
+    kind: EventKind
+    target: Optional[int]
+    data: Any
 
-    def do_POST(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        response = f"POST received {post_data.decode('utf-8')}"
-        self.wfile.write(response.encode('utf-8'))
+class Message(NamedTuple):
+    kind: EventKind
+    data: Any
 
-        draw = display.draw()
-        draw.rectangle((10, 10, 200, 70), fill = 255)
-        draw.text((10, 10), post_data.decode('utf-8'), font = display.font24, fill = 0)
-        display.display_partial(0, 0, display.epd.width, display.epd.height)
+@dataclass(slots=True)
+class EventCtx:
+    event_queue: asyncio.Queue
+    scheduled_tasks: dict[(int, int), asyncio.Task[Any]]
+    widget_id: Optional[int] = None
+    task_id: int = 0
+    changed: bool = False
+
+    def mark_changed(self):
+        self.changed = True
+
+    def spawn_task(self, coroutine: Coroutine[None, None, Any]):
+        async def dispatch_action(event_queue: asyncio.Queue, widget_id: int, task_id: int):
+            result = await coroutine
+            await event_queue.put(Event(kind=EventKind.TASK, target=widget_id, data=(task_id, result)))
+
+        task_id = self.task_id
+        task = asyncio.create_task(dispatch_action(self.event_queue, self.widget_id, task_id))
+        self.scheduled_tasks[(self.widget_id, task_id)] = task
+        self.task_id = task_id + 1
 
 
-with socketserver.TCPServer(("", PORT), SimpleHTTPRequestHandle) as httpd:
-    print(f"Serving on Port {PORT}")
-    httpd.serve_forever()
+@dataclass(slots=True)
+class Greeter:
+    name: str = "Welt"
+
+    def update(self, ctx: EventCtx, message: Message):
+        match message.kind:
+            case EventKind.UPDATE:
+                if self.name != message.data:
+                    self.name = message.data
+                    ctx.mark_changed()
+            case _:
+                pass
+
+    def view(self, ctx: ImageDraw, size: (int, int)):
+        (width, height) = size
+        ctx.rectangle((0, 0, width, height), fill = 255)
+        ctx.text((0, 0), f"Hallo {self.name}!", font_size = 24, fill = 0)
 
 
-# try:
-#     logging.info("epd7in5_V2 Demo")
-#     epd = epd7in5_V2.EPD()
-#     logging.info("init and Clear")
-#     epd.init()
-#     epd.Clear()
-#
-#     font24 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
-#     font18 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 18)
-#
-#     logging.info("read bmp file")
-#     Himage = Image.open(os.path.join(picdir, '7in5_V2.bmp'))
-#     epd.display(epd.getbuffer(Himage))
-#     time.sleep(2)
-#
-#     logging.info("read bmp file on window")
-#     Himage2 = Image.new('1', (epd.width, epd.height), 255)  # 255: clear the frame
-#     bmp = Image.open(os.path.join(picdir, '100x100.bmp'))
-#     Himage2.paste(bmp, (50,10))
-#     epd.display(epd.getbuffer(Himage2))
-#     time.sleep(2)
-#
-#     # Drawing on the Horizontal image
-#     logging.info("Drawing on the Horizontal image...")
-#     epd.init_fast()
-#     Himage = Image.new('1', (epd.width, epd.height), 255)  # 255: clear the frame
-#     draw = ImageDraw.Draw(Himage)
-#     draw.text((10, 0), 'hello Chi', font = font24, fill = 0)
-#     draw.text((10, 20), '7.5inch e-Paper', font = font24, fill = 0)
-#     draw.text((150, 0), u'微雪电子', font = font24, fill = 0)
-#     draw.line((20, 50, 70, 100), fill = 0)
-#     draw.line((70, 50, 20, 100), fill = 0)
-#     draw.rectangle((20, 50, 70, 100), outline = 0)
-#     draw.line((165, 50, 165, 100), fill = 0)
-#     draw.line((140, 75, 190, 75), fill = 0)
-#     draw.arc((140, 50, 190, 100), 0, 360, fill = 0)
-#     draw.rectangle((80, 50, 130, 100), fill = 0)
-#     draw.chord((200, 50, 250, 100), 0, 360, fill = 0)
-#     epd.display(epd.getbuffer(Himage))
-#     time.sleep(2)
-#
-#     # partial update
-#     logging.info("5.show time")
-#     epd.init_part()
-#     # Himage = Image.new('1', (epd.width, epd.height), 0)
-#     # draw = ImageDraw.Draw(Himage)
-#     num = 0
-#     while (True):
-#         draw.rectangle((10, 120, 130, 170), fill = 255)
-#         draw.text((10, 120), time.strftime('%H:%M:%S'), font = font24, fill = 0)
-#         epd.display_Partial(epd.getbuffer(Himage),0, 0, epd.width, epd.height)
-#         num = num + 1
-#         if(num == 10):
-#             break
-#
-#
-#
-#     # # Drawing on the Vertical image
-#     # logging.info("2.Drawing on the Vertical image...")
-#     # epd.init()
-#     # Limage = Image.new('1', (epd.height, epd.width), 255)  # 255: clear the frame
-#     # draw = ImageDraw.Draw(Limage)
-#     # draw.text((2, 0), 'hello world', font = font18, fill = 0)
-#     # draw.text((2, 20), '7.5inch epd', font = font18, fill = 0)
-#     # draw.text((20, 50), u'微雪电子', font = font18, fill = 0)
-#     # draw.line((10, 90, 60, 140), fill = 0)
-#     # draw.line((60, 90, 10, 140), fill = 0)
-#     # draw.rectangle((10, 90, 60, 140), outline = 0)
-#     # draw.line((95, 90, 95, 140), fill = 0)
-#     # draw.line((70, 115, 120, 115), fill = 0)
-#     # draw.arc((70, 90, 120, 140), 0, 360, fill = 0)
-#     # draw.rectangle((10, 150, 60, 200), fill = 0)
-#     # draw.chord((70, 150, 120, 200), 0, 360, fill = 0)
-#     # epd.display(epd.getbuffer(Limage))
-#     # time.sleep(2)
-#
-#     
-#
-#     logging.info("Clear...")
-#     epd.init()
-#     epd.Clear()
-#
-#     logging.info("Goto Sleep...")
-#     epd.sleep()
-#     
-# except IOError as e:
-#     logging.info(e)
-#     
-# except KeyboardInterrupt:    
-#     logging.info("ctrl + c:")
-#     epd7in5_V2.epdconfig.module_exit(cleanup=True)
-#     exit()
+@dataclass(slots=True)
+class Clock:
+    def update(self, ctx: EventCtx, message: Message):
+        match message.kind:
+            case EventKind.ADDED | EventKind.TASK:
+                ctx.mark_changed()
+                ctx.spawn_task(asyncio.sleep(60 - min(time.localtime().tm_sec, 60)))
+            case _:
+                pass
+
+    def view(self, ctx: ImageDraw, size: (int, int)):
+        (width, height) = size
+        ctx.rectangle((0, 0, width, height), fill = 255)
+        ctx.text((0, 0), time.strftime('%H:%M'), font_size = 24, fill = 0)
+
+async def ui_handler(event_queue: asyncio.Queue):
+    display = Display(epd=epd7in5_V2.EPD(), image=Image.new("1", (800, 480), 255))
+    display.set_mode(DisplayMode.FULL)
+
+    ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
+    widgets: dict[int, (Any, (int, int, int, int))] = dict([
+        (0, (Clock(), (0, 0, 800, 160))),
+        (1, (Greeter(), (0, 160, 800, 320)))
+    ])
+
+    for (widget_id, (widget, (x, y, width, height))) in widgets.items():
+        message = Message(kind=EventKind.ADDED, data=None)
+        ctx.widget_id = widget_id
+        widget.update(ctx, message)
+        image = display.slice(x, y, width, height)
+        widget.view(ImageDraw.Draw(image), (width, height))
+        display.draw(x, y, image)
+
+    display.display()
+
+    display.set_mode(DisplayMode.PARTIAL)
+    ctx.widget_id = None
+    ctx.changed = False
+
+    while True:
+        event = await event_queue.get()
+
+        match event.kind:
+            case EventKind.ADDED:
+                # TODO: Dynamically add widgets.
+                pass
+            case EventKind.REMOVED:
+                # TODO: Widgets currently make no use of as data is stored in
+                # memory. In the future it should be used to clean up
+                # resources like files.
+                pass
+            case EventKind.TASK:
+                del ctx.scheduled_tasks[(event.target, event.data[0])]
+                
+        value = widgets.get(event.target)
+
+        if value == None:
+            continue
+
+        (widget, (x, y, width, height)) = value
+        message = Message(kind=event.kind, data=event.data)
+        ctx.widget_id = event.target
+        widget.update(ctx, message)
+
+        if ctx.changed:
+            image = display.slice(x, y, width, height)
+            widget.view(ImageDraw.Draw(image), (width, height))
+            display.draw(x, y, image)
+            display.display_partial(x, y, width, height)
+
+        ctx.widget_id = None
+        ctx.changed = False
+
+
+async def web_server(event_queue: asyncio):
+    async def index(request):
+        return web.Response(text='PiInk')
+
+    async def hello(request: web.Request):
+        name = await request.text()
+        await event_queue.put(Event(kind=EventKind.UPDATE, target=1, data=name))
+        return web.Response(text=f"Post received {name}")
+
+    app = web.Application()
+    app.add_routes([web.get("/", index), web.post("/", hello)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host=None, port=PORT)
+    await site.start()
+    print(f"======== Running on {site.name} ========")
+
+    # wait forever
+    await asyncio.Event().wait()
+
+async def main():
+    event_queue = asyncio.Queue(maxsize=2)
+
+    ui_task = asyncio.create_task(ui_handler(event_queue))
+    server_task = asyncio.create_task(web_server(event_queue))
+
+    await server_task
+    await ui_task
+
+asyncio.run(main())
