@@ -317,6 +317,9 @@ async def ui_handler(event_queue: asyncio.Queue):
         ctx.widget_id = None
         ctx.changed = False
 
+#def centered_text(draw: ImageDraw, text: str, font: str, left, top, right, bottom, padding_x, padding_y):
+
+
 
 async def web_server(event_queue: asyncio):
     async def index(request):
