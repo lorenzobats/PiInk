@@ -174,6 +174,7 @@ async def ui_handler(event_queue: asyncio.Queue):
         ctx.widget_id = widget_id
         widget.update(ctx, message)
         image = display.slice(x, y, width, height)
+
         widget.view(ImageDraw.Draw(image), (width, height))
         display.draw(x, y, image)
 
