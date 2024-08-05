@@ -11,6 +11,7 @@ if os.path.exists(libdir):
 import logging
 from waveshare_epd import epd7in5_V2
 import time
+import json
 from PIL import Image, ImageDraw, ImageFont
 from enum import Enum
 import asyncio
@@ -147,8 +148,18 @@ class Greeter:
 
 @dataclass(slots=True)
 class Weather:
+    lat: int
+    long: int
+    key: str
     session: aiohttp.ClientSession = None
-    temperature: int = 12
+    temperature: int = 0
+
+    def __init__(self):
+        with open('../openweathermap.json', 'r') as file:
+            data = json.load(file)
+            self.lat = data['lat']
+            self.long = data['long']
+            self.key = data['apiKey']
 
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
@@ -164,13 +175,9 @@ class Weather:
                 pass
 
     async def schedule_weather_update(self):
-        lat = 52.52
-        long = 13.4
-        appid = ''
-        endpoint = 'https://api.openweathermap.org/data/3.0/onecall'
-
+        endpoint = 'https://api.openweathermap.org/data/2.5/weather'
         await asyncio.sleep(10)
-        async with self.session.get(f'{endpoint}?lat={lat}&long={long}&appid={appid}') as response:
+        async with self.session.get(f'{endpoint}?lat={self.lat}&long={self.long}&appid={self.key}') as response:
             weather = await response.json()
             print(weather)
             return weather
@@ -178,7 +185,8 @@ class Weather:
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
         ctx.rectangle((400, 0, width, height), fill=255)
-        ctx.text((0, 0), f"Wetter: {self.temperature}", font_size=24, fill=0)
+        font = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        ctx.text((0, 0), f"Weather: {self.temperature}°C", font = font, fill=0)
 
 
 @dataclass(slots=True)
