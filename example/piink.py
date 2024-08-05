@@ -87,6 +87,7 @@ class Display(NamedTuple):
 
     def clear(self):
         self.epd.Clear()
+        return
 
 class EventKind(Enum):
     ADDED = 0
@@ -284,5 +285,6 @@ async def main():
 
     await server_task
     await ui_task
+    
 
 asyncio.run(main())
