@@ -193,9 +193,9 @@ class Clock:
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill=255)
-        ctx.text((0, 0), time.strftime('%H:%M'), font_size=24, fill=0)
-
+        ctx.rectangle((0, 0, width, height), fill = 255)
+        font = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        ctx.text((5, 5), time.strftime('%H:%M // %A, %d.%m.%y'), font = font, fill = 0)
 
 async def ui_handler(event_queue: asyncio.Queue):
     display = Display(epd=epd7in5_V2.EPD(), image=Image.new("1", (800, 480), 255))
@@ -213,6 +213,7 @@ async def ui_handler(event_queue: asyncio.Queue):
         ctx.widget_id = widget_id
         widget.update(ctx, message)
         image = display.slice(x, y, width, height)
+
         widget.view(ImageDraw.Draw(image), (width, height))
         display.draw(x, y, image)
 
