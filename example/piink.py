@@ -151,8 +151,8 @@ class Weather:
     lat: int
     long: int
     key: str
-    session: aiohttp.ClientSession = None
-    temperature: int = 0
+    session: aiohttp.ClientSession
+    temperature: int
 
     def __init__(self):
         with open('../openweathermap.json', 'r') as file:
@@ -160,6 +160,8 @@ class Weather:
             self.lat = data['lat']
             self.long = data['long']
             self.key = data['apiKey']
+            self.session: aiohttp.ClientSession = None
+            self.temperature: int = 0
 
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
@@ -177,10 +179,10 @@ class Weather:
     async def schedule_weather_update(self):
         endpoint = 'https://api.openweathermap.org/data/2.5/weather'
         await asyncio.sleep(10)
-        async with self.session.get(f'{endpoint}?lat={self.lat}&long={self.long}&appid={self.key}') as response:
+        async with self.session.get(f'{endpoint}?q=Berlin&appid={self.key}') as response:
             weather = await response.json()
-            print(weather)
-            return weather
+            print(weather['main']['temp'])
+            return weather['main']['temp']
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
