@@ -223,9 +223,10 @@ async def ui_handler(event_queue: asyncio.Queue):
         image = display.slice(x, y, width, height)
 
         widget.view(ImageDraw.Draw(image), (width, height))
-        display.draw(x, y, image)
+        image.show()
+        #display.draw(x, y, image)
 
-    display.display()
+    #display.display()
 
     display.set_mode(DisplayMode.PARTIAL)
     ctx.widget_id = None
