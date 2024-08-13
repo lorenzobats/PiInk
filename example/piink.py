@@ -217,12 +217,32 @@ class Weather:
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=3)
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
         font20 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 20)
         ctx.text((120, 30), f'{self.weather_data.temperature}°C', font=font36)
         ctx.text((120, 70), f"{self.weather_data.main}", font=font20)
         ctx.text((120, 90), f"H: {self.weather_data.max}°C // T: {self.weather_data.min}°C", font=font20)
+
+
+@dataclass(slots=True)
+class Todo:
+
+    def __init__(self):
+        pass
+
+    def update(self, ctx: EventCtx, message: Message):
+        match message.kind:
+            case EventKind.ADDED | EventKind.TASK:
+                ctx.mark_changed()
+            case _:
+                pass
+
+    def view(self, ctx: ImageDraw, size: (int, int)):
+        (width, height) = size
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=3)
+        font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
+        centered_text_h('Todos', ctx, font36)
 
 
 @dataclass(slots=True)
@@ -237,7 +257,7 @@ class Clock:
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill = 255)
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
         font = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
         ctx.text((0, 0), time.strftime('%H:%M // %A, %d.%m.%y'), font=font)
 
@@ -247,9 +267,9 @@ async def ui_handler(event_queue: asyncio.Queue):
 
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
     widgets: dict[int, (Any, (int, int, int, int))] = dict([
-        (0, (Clock(), (0, 0, 800, 30))),
-        (1, (Greeter(), (0, 160, 800, 320))),
-        (2, (Weather(), (0, 30, 400, 150)))
+        (0, (Clock(),   (0, 0, 800, 30))),
+        (1, (Weather(), (0, 30, 400, 150))),
+        (2, (Todo(),    (0, 180, 400, 300)))
     ])
 
     for (widget_id, (widget, (x, y, width, height))) in widgets.items():
