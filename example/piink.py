@@ -162,6 +162,7 @@ class WeatherData:
     min: float = 0
     max: float = 0
     main: str = 'N/A'
+    desc: str = 'N/A'
     weather_icon: str = 'N/A'
 
 
@@ -205,13 +206,14 @@ class Weather:
 
     async def get_weather(self):
         endpoint = 'https://api.openweathermap.org/data/2.5/weather'
-        async with self.session.get(f'{endpoint}?q={self.city}&appid={self.key}') as response:
+        async with self.session.get(f'{endpoint}?q={self.city}&appid={self.key}&lang=de') as response:
             weather = await response.json()
             weather_data = WeatherData(
                         round(weather['main']['temp'] - 273.15, 1),
                         round(weather['main']['temp_min'] - 273.15, 1),
                         round(weather['main']['temp_max'] - 273.15, 1),
                         weather['weather'][0]['main'],
+                        weather['weather'][0]['description'],
                         weather['weather'][0]['icon'])
             return weather_data
 
@@ -221,7 +223,7 @@ class Weather:
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
         font20 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 20)
         ctx.text((120, 30), f'{self.weather_data.temperature}°C', font=font36)
-        ctx.text((120, 70), f"{self.weather_data.main}", font=font20)
+        ctx.text((120, 70), f"{self.weather_data.desc}", font=font20)
         ctx.text((120, 90), f"H: {self.weather_data.max}°C // T: {self.weather_data.min}°C", font=font20)
 
 
