@@ -170,6 +170,14 @@ class WeatherData:
 class Weather:
     key: str
     city: str
+    weather_icon_dict = {
+            'Thunderstorm': '../weather_icons/thunderstorm.bmp',
+            'Drizzle': '../weather_icons/drizzle.bmp',
+            'Rain': '../weather_icons/rain.bmp',
+            'Snow': '../weather_icons/snow.bmp',
+            'Clear': '../weather_icons/clear.bmp',
+            'Clouds': '../weather_icons/cloudy.bmp',
+    }
     session: aiohttp.ClientSession
     weather_data: WeatherData
 
@@ -227,10 +235,10 @@ class Weather:
         ctx.text((130, 120), f'H: {self.weather_data.max}°C')
         ctx.text((130, 150), f'T: {self.weather_data.min}°C', font=font24)
 
-        weather_icon = Image.open('../weather_icons/wi-snow.bmp')
-        weather_icon = weather_icon.convert('L')
-        print(weather_icon)
-        ctx.bitmap((0, 0), weather_icon)
+        if self.weather_icon_dict.get(self.weather_data.main):
+            weather_icon = Image.open(self.weather_icon_dict.get(self.weather_data.main))
+            weather_icon.thumbnail((80, 80))
+            ctx.bitmap((20, 80), weather_icon)
 
 
 @dataclass(slots=True)
