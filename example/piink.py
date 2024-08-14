@@ -158,9 +158,9 @@ class Greeter:
 
 @dataclass(slots=True)
 class WeatherData:
-    temperature: float = 0
-    min: float = 0
-    max: float = 0
+    temperature: int = 0
+    min: int = 0
+    max: int = 0
     main: str = 'N/A'
     desc: str = 'N/A'
     weather_icon: str = 'N/A'
@@ -217,9 +217,9 @@ class Weather:
         async with self.session.get(f'{endpoint}?q={self.city}&appid={self.key}&lang=de') as response:
             weather = await response.json()
             weather_data = WeatherData(
-                        round(weather['main']['temp'] - 273.15, 1),
-                        round(weather['main']['temp_min'] - 273.15, 1),
-                        round(weather['main']['temp_max'] - 273.15, 1),
+                        int(weather['main']['temp'] - 273),
+                        int(weather['main']['temp_min'] - 273),
+                        int(weather['main']['temp_max'] - 273),
                         weather['weather'][0]['main'],
                         weather['weather'][0]['description'],
                         weather['weather'][0]['icon'])
