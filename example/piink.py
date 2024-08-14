@@ -227,6 +227,11 @@ class Weather:
         ctx.text((130, 120), f'H: {self.weather_data.max}°C')
         ctx.text((130, 150), f'T: {self.weather_data.min}°C', font=font24)
 
+        weather_icon = Image.open('../weather_icons/wi-snow.bmp')
+        weather_icon = weather_icon.convert('L')
+        print(weather_icon)
+        ctx.bitmap((0, 0), weather_icon)
+
 
 @dataclass(slots=True)
 class Clock:
