@@ -253,9 +253,11 @@ class Clock:
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill = 255)
-        font = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
-        ctx.text((0, 0), time.strftime('%H:%M // %A, %d.%m.%y'), font=font)
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
+        font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
+        font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        centered_text_h(time.strftime('%H:%M'), ctx, font=font36, voffset=70)
+        centered_text_h(time.strftime('%A, %d.%m.%y'), ctx, font=font24, voffset=110)
 
 async def ui_handler(event_queue: asyncio.Queue):
     display = Display(epd=epd7in5_V2.EPD(), image=Image.new("1", (800, 480), 255))
