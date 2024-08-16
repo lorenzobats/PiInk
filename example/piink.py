@@ -251,9 +251,6 @@ class Weather:
 class Todo:
     todos: list[Any] = field(default_factory=list)
 
-    def __init__(self):
-        pass
-
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
             case EventKind.ADDED | EventKind.TASK:
@@ -262,7 +259,10 @@ class Todo:
                 if message.data['action'] == "ADD":
                     self.todos.append(message.data['value'])
                 if message.data['action'] == "DELETE":
-                    self.todos.remove(message.data['value'])
+                    try:
+                        self.todos.pop(int(message.data['value']))
+                    except:
+                        pass
                 ctx.mark_changed()
                 pass
 
@@ -273,7 +273,7 @@ class Todo:
         font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
         centered_text_h('Todos', ctx, font36)
         for idx, todo in enumerate(self.todos):
-            ctx.text(30, 50 + idx * 20, f'{idx}. {todo}', font=font24)
+            ctx.text((30, 50 + idx * 20), f'{idx}. {todo}', font=font24)
 
 
 
@@ -370,6 +370,7 @@ async def web_server(event_queue: asyncio):
 
     async def todo_index(request: web.Request):
         html = """
+        <!DOCTYPE html>
         <html>
             <head></head>
             <body>
@@ -380,7 +381,6 @@ async def web_server(event_queue: asyncio):
                     </select>
                     <label for="value">
                     <input id="value" name="value">
-
                     <button type="submit">Send</button>
                 </form>
             </body>
@@ -391,8 +391,7 @@ async def web_server(event_queue: asyncio):
     async def post_todo(request: web.Request):
         data = await request.post()
         await event_queue.put(Event(kind=EventKind.UPDATE, target=2, data={"action": data["action"], "value": data["value"]}))
-        return web.Response()
-
+        return web.HTTPFound(location='/todo')
 
     app = web.Application()
     app.add_routes([
