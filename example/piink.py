@@ -11,10 +11,12 @@ if os.path.exists(libdir):
 import logging
 from waveshare_epd import epd7in5_V2
 import time
+import json
 from PIL import Image, ImageDraw, ImageFont
 from enum import Enum
 import asyncio
 from aiohttp import web
+import aiohttp
 from typing import Any, Coroutine, NamedTuple, Optional
 from dataclasses import dataclass
 
@@ -86,6 +88,7 @@ class Display(NamedTuple):
 
     def clear(self):
         self.epd.Clear()
+        return
 
 class EventKind(Enum):
     ADDED = 0
@@ -101,6 +104,16 @@ class Event(NamedTuple):
 class Message(NamedTuple):
     kind: EventKind
     data: Any
+
+
+def centered_text_h(content: str, ctx: ImageDraw, font, voffset: int = 0):
+    '''Centers the given content relative to the ImageDraw ctx.
+    Vertical Offset can be applied'''
+    (width, height) = ctx.im.size
+    rendered_len = ctx.textlength(content, font)
+    pad = (width - rendered_len) / 2
+    ctx.text((pad, voffset), content, font=font)
+
 
 @dataclass(slots=True)
 class EventCtx:
@@ -139,8 +152,93 @@ class Greeter:
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill = 255)
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
         ctx.text((0, 0), f"Hallo {self.name}!", font_size = 24, fill = 0)
+
+
+@dataclass(slots=True)
+class WeatherData:
+    temperature: int = 0
+    min: int = 0
+    max: int = 0
+    main: str = 'N/A'
+    desc: str = 'N/A'
+    weather_icon: str = 'N/A'
+
+
+@dataclass(slots=True)
+class Weather:
+    key: str
+    city: str
+    weather_icon_dict = {
+            'Thunderstorm': '../weather_icons/thunderstorm.bmp',
+            'Drizzle': '../weather_icons/drizzle.bmp',
+            'Rain': '../weather_icons/rain.bmp',
+            'Snow': '../weather_icons/snow.bmp',
+            'Clear': '../weather_icons/clear.bmp',
+            'Clouds': '../weather_icons/cloudy.bmp',
+    }
+    session: aiohttp.ClientSession
+    weather_data: WeatherData
+
+    def __init__(self):
+        self.session: aiohttp.ClientSession = None
+        self.weather_data = WeatherData()
+        try:
+            with open('../openweathermap.json', 'r') as file:
+                data = json.load(file)
+                self.city = data['city']
+                self.key = data['apiKey']
+        except:
+            print("openweathermap.json file not found.")
+
+    def update(self, ctx: EventCtx, message: Message):
+        match message.kind:
+            case EventKind.ADDED:
+                self.session = aiohttp.ClientSession()
+                ctx.spawn_task(self.get_weather())
+                pass
+            case EventKind.TASK:
+                data = message.data[1]
+                if self.weather_data != data:
+                    self.weather_data = data
+                    print(f'Weather changed {self.weather_data}')
+                    ctx.mark_changed()
+                ctx.spawn_task(self.schedule_weather_update())
+            case _:
+                pass
+
+    async def schedule_weather_update(self):
+        await asyncio.sleep(10)
+        return await self.get_weather()
+
+    async def get_weather(self):
+        endpoint = 'https://api.openweathermap.org/data/2.5/weather'
+        async with self.session.get(f'{endpoint}?q={self.city}&appid={self.key}&lang=de') as response:
+            weather = await response.json()
+            weather_data = WeatherData(
+                        int(weather['main']['temp'] - 273),
+                        int(weather['main']['temp_min'] - 273),
+                        int(weather['main']['temp_max'] - 273),
+                        weather['weather'][0]['main'],
+                        weather['weather'][0]['description'],
+                        weather['weather'][0]['icon'])
+            return weather_data
+
+    def view(self, ctx: ImageDraw, size: (int, int)):
+        (width, height) = size
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
+        font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
+        font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        ctx.text((130, 50), f'{self.weather_data.temperature}°C', font=font36)
+        ctx.text((130, 90), f'{self.weather_data.desc}', font=font24)
+        ctx.text((130, 120), f'H: {self.weather_data.max}°C')
+        ctx.text((130, 150), f'T: {self.weather_data.min}°C', font=font24)
+
+        if self.weather_icon_dict.get(self.weather_data.main):
+            weather_icon = Image.open(self.weather_icon_dict.get(self.weather_data.main))
+            weather_icon.thumbnail((80, 80))
+            ctx.bitmap((20, 80), weather_icon)
 
 
 @dataclass(slots=True)
@@ -155,9 +253,11 @@ class Clock:
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill = 255)
-        font = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
-        ctx.text((5, 5), time.strftime('%H:%M // %A, %d.%m.%y'), font = font, fill = 0)
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
+        font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
+        font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        centered_text_h(time.strftime('%H:%M'), ctx, font=font36, voffset=70)
+        centered_text_h(time.strftime('%A, %d.%m.%y'), ctx, font=font24, voffset=110)
 
 async def ui_handler(event_queue: asyncio.Queue):
     display = Display(epd=epd7in5_V2.EPD(), image=Image.new("1", (800, 480), 255))
@@ -165,8 +265,8 @@ async def ui_handler(event_queue: asyncio.Queue):
 
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
     widgets: dict[int, (Any, (int, int, int, int))] = dict([
-        (0, (Clock(), (0, 0, 800, 160))),
-        (1, (Greeter(), (0, 160, 800, 320)))
+        (0, (Clock(), (0, 0, 400, 240))),
+        (1, (Weather(), (0, 240, 400, 240)))
     ])
 
     for (widget_id, (widget, (x, y, width, height))) in widgets.items():
@@ -198,10 +298,9 @@ async def ui_handler(event_queue: asyncio.Queue):
                 pass
             case EventKind.TASK:
                 del ctx.scheduled_tasks[(event.target, event.data[0])]
-                
-        value = widgets.get(event.target)
 
-        if value == None:
+        value = widgets.get(event.target)
+        if value is None:
             continue
 
         (widget, (x, y, width, height)) = value
@@ -226,6 +325,7 @@ async def web_server(event_queue: asyncio):
     async def hello(request: web.Request):
         name = await request.text()
         await event_queue.put(Event(kind=EventKind.UPDATE, target=1, data=name))
+        await event_queue.put(Event(kind=EventKind.TASK, target=3, data=name))
         return web.Response(text=f"Post received {name}")
 
     app = web.Application()
@@ -247,5 +347,6 @@ async def main():
 
     await server_task
     await ui_task
+    
 
 asyncio.run(main())
