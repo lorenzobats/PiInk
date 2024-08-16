@@ -64,7 +64,7 @@ class Display(NamedTuple):
 
         for i in range(0, len(buffer)):
             buffer[i] ^= 0xFF
-            
+
         self.epd.display(buffer)
 
     def display_partial(self, x: int, y: int, width: int, height: int):
@@ -158,10 +158,11 @@ class Greeter:
 
 @dataclass(slots=True)
 class WeatherData:
-    temperature: float = 0
-    min: float = 0
-    max: float = 0
+    temperature: int = 0
+    min: int = 0
+    max: int = 0
     main: str = 'N/A'
+    desc: str = 'N/A'
     weather_icon: str = 'N/A'
 
 
@@ -169,6 +170,14 @@ class WeatherData:
 class Weather:
     key: str
     city: str
+    weather_icon_dict = {
+            'Thunderstorm': '../weather_icons/thunderstorm.bmp',
+            'Drizzle': '../weather_icons/drizzle.bmp',
+            'Rain': '../weather_icons/rain.bmp',
+            'Snow': '../weather_icons/snow.bmp',
+            'Clear': '../weather_icons/clear.bmp',
+            'Clouds': '../weather_icons/cloudy.bmp',
+    }
     session: aiohttp.ClientSession
     weather_data: WeatherData
 
@@ -205,13 +214,14 @@ class Weather:
 
     async def get_weather(self):
         endpoint = 'https://api.openweathermap.org/data/2.5/weather'
-        async with self.session.get(f'{endpoint}?q={self.city}&appid={self.key}') as response:
+        async with self.session.get(f'{endpoint}?q={self.city}&appid={self.key}&lang=de') as response:
             weather = await response.json()
             weather_data = WeatherData(
-                        round(weather['main']['temp'] - 273.15, 1),
-                        round(weather['main']['temp_min'] - 273.15, 1),
-                        round(weather['main']['temp_max'] - 273.15, 1),
+                        int(weather['main']['temp'] - 273),
+                        int(weather['main']['temp_min'] - 273),
+                        int(weather['main']['temp_max'] - 273),
                         weather['weather'][0]['main'],
+                        weather['weather'][0]['description'],
                         weather['weather'][0]['icon'])
             return weather_data
 
@@ -219,10 +229,16 @@ class Weather:
         (width, height) = size
         ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=3)
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
-        font20 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 20)
-        ctx.text((120, 30), f'{self.weather_data.temperature}°C', font=font36)
-        ctx.text((120, 70), f"{self.weather_data.main}", font=font20)
-        ctx.text((120, 90), f"H: {self.weather_data.max}°C // T: {self.weather_data.min}°C", font=font20)
+        font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        ctx.text((130, 50), f'{self.weather_data.temperature}°C', font=font36)
+        ctx.text((130, 90), f'{self.weather_data.desc}', font=font24)
+        ctx.text((130, 120), f'H: {self.weather_data.max}°C')
+        ctx.text((130, 150), f'T: {self.weather_data.min}°C', font=font24)
+
+        if self.weather_icon_dict.get(self.weather_data.main):
+            weather_icon = Image.open(self.weather_icon_dict.get(self.weather_data.main))
+            weather_icon.thumbnail((80, 80))
+            ctx.bitmap((20, 80), weather_icon)
 
 
 @dataclass(slots=True)
@@ -258,8 +274,10 @@ class Clock:
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
         ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
-        font = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
-        ctx.text((0, 0), time.strftime('%H:%M // %A, %d.%m.%y'), font=font)
+        font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
+        font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        centered_text_h(time.strftime('%H:%M'), ctx, font=font36, voffset=70)
+        centered_text_h(time.strftime('%A, %d.%m.%y'), ctx, font=font24, voffset=110)
 
 async def ui_handler(event_queue: asyncio.Queue):
     display = Display(epd=epd7in5_V2.EPD(), image=Image.new("1", (800, 480), 255))
@@ -267,9 +285,9 @@ async def ui_handler(event_queue: asyncio.Queue):
 
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
     widgets: dict[int, (Any, (int, int, int, int))] = dict([
-        (0, (Clock(),   (0, 0, 800, 30))),
-        (1, (Weather(), (0, 30, 400, 150))),
-        (2, (Todo(),    (0, 180, 400, 300)))
+        (0, (Clock(),   (0, 0, 400, 240))),
+        (1, (Weather(), (0, 240, 400, 240))),
+        (2, (Todo(),    (400, 0, 400, 480))),
     ])
 
     for (widget_id, (widget, (x, y, width, height))) in widgets.items():
