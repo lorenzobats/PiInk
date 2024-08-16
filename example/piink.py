@@ -177,6 +177,7 @@ class Weather:
             'Snow': '../weather_icons/snow.bmp',
             'Clear': '../weather_icons/clear.bmp',
             'Clouds': '../weather_icons/cloudy.bmp',
+            'Night': '../weather_icons/night.bmp',
     }
     session: aiohttp.ClientSession
     weather_data: WeatherData
@@ -236,7 +237,12 @@ class Weather:
         ctx.text((130, 150), f'T: {self.weather_data.min}°C', font=font24)
 
         if self.weather_icon_dict.get(self.weather_data.main):
-            weather_icon = Image.open(self.weather_icon_dict.get(self.weather_data.main))
+            current_time = time.localtime()
+            weather_icon = Image.open(self.weather_icon_dict.get('Clear'))
+            if self.weather_data.main == 'Clear' and (current_time.tm_hour < 6 or current_time.tm_hour > 18):
+                weather_icon = Image.open(self.weather_icon_dict.get('Night'))
+            else:
+                weather_icon = Image.open(self.weather_icon_dict.get(self.weather_data.main))
             weather_icon.thumbnail((80, 80))
             ctx.bitmap((20, 80), weather_icon)
 
@@ -337,6 +343,9 @@ async def ui_handler(event_queue: asyncio.Queue):
 
         ctx.widget_id = None
         ctx.changed = False
+
+#def centered_text(draw: ImageDraw, text: str, font: str, left, top, right, bottom, padding_x, padding_y):
+
 
 
 async def web_server(event_queue: asyncio):
