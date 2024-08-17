@@ -257,7 +257,8 @@ class Todo:
                 ctx.mark_changed()
             case EventKind.UPDATE:
                 if message.data['action'] == "ADD":
-                    self.todos.append(message.data['value'])
+                    if len(self.todos) < 10:
+                        self.todos.append(message.data['value'])
                 if message.data['action'] == "DELETE":
                     try:
                         self.todos.pop(int(message.data['value']))
@@ -270,10 +271,12 @@ class Todo:
         (width, height) = size
         ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=3)
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
-        font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        font28 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 28)
         centered_text_h('Todos', ctx, font36)
         for idx, todo in enumerate(self.todos):
-            ctx.text((30, 50 + idx * 20), f'{idx}. {todo}', font=font24)
+            todo = f'[{idx}] {todo}'
+            text_length = ctx.textlength(todo, font28)
+            ctx.text((30, 70 + idx * 32), todo, font=font28)
 
 
 
