@@ -18,7 +18,7 @@ import asyncio
 from aiohttp import web
 import aiohttp
 from typing import Any, Coroutine, NamedTuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -64,7 +64,7 @@ class Display(NamedTuple):
 
         for i in range(0, len(buffer)):
             buffer[i] ^= 0xFF
-            
+
         self.epd.display(buffer)
 
     def display_partial(self, x: int, y: int, width: int, height: int):
@@ -228,7 +228,7 @@ class Weather:
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=3)
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
         font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
         ctx.text((130, 50), f'{self.weather_data.temperature}°C', font=font36)
@@ -245,6 +245,36 @@ class Weather:
                 weather_icon = Image.open(self.weather_icon_dict.get(self.weather_data.main))
             weather_icon.thumbnail((80, 80))
             ctx.bitmap((20, 80), weather_icon)
+
+
+@dataclass(slots=True)
+class Todo:
+    todos: list[Any] = field(default_factory=list)
+
+    def update(self, ctx: EventCtx, message: Message):
+        match message.kind:
+            case EventKind.ADDED | EventKind.TASK:
+                ctx.mark_changed()
+            case EventKind.UPDATE:
+                if message.data['action'] == "ADD":
+                    self.todos.append(message.data['value'])
+                if message.data['action'] == "DELETE":
+                    try:
+                        self.todos.pop(int(message.data['value']))
+                    except:
+                        pass
+                ctx.mark_changed()
+                pass
+
+    def view(self, ctx: ImageDraw, size: (int, int)):
+        (width, height) = size
+        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=3)
+        font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
+        font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        centered_text_h('Todos', ctx, font36)
+        for idx, todo in enumerate(self.todos):
+            ctx.text((30, 50 + idx * 20), f'{idx}. {todo}', font=font24)
+
 
 
 @dataclass(slots=True)
@@ -271,8 +301,9 @@ async def ui_handler(event_queue: asyncio.Queue):
 
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
     widgets: dict[int, (Any, (int, int, int, int))] = dict([
-        (0, (Clock(), (0, 0, 400, 240))),
-        (1, (Weather(), (0, 240, 400, 240)))
+        (0, (Clock(),   (0, 0, 400, 240))),
+        (1, (Weather(), (0, 240, 400, 240))),
+        (2, (Todo(),    (400, 0, 400, 480))),
     ])
 
     for (widget_id, (widget, (x, y, width, height))) in widgets.items():
@@ -337,8 +368,38 @@ async def web_server(event_queue: asyncio):
         await event_queue.put(Event(kind=EventKind.TASK, target=3, data=name))
         return web.Response(text=f"Post received {name}")
 
+    async def todo_index(request: web.Request):
+        html = """
+        <!DOCTYPE html>
+        <html>
+            <head></head>
+            <body>
+                <form action="/todo" method="post">
+                    <select name="action">
+                        <option value="ADD">Add</option>
+                        <option value="DELETE">Delete</option>
+                    </select>
+                    <label for="value">
+                    <input id="value" name="value">
+                    <button type="submit">Send</button>
+                </form>
+            </body>
+        </html>
+        """
+        return web.Response(content_type="text/html", text=html)
+
+    async def post_todo(request: web.Request):
+        data = await request.post()
+        await event_queue.put(Event(kind=EventKind.UPDATE, target=2, data={"action": data["action"], "value": data["value"]}))
+        return web.HTTPFound(location='/todo')
+
     app = web.Application()
-    app.add_routes([web.get("/", index), web.post("/", hello)])
+    app.add_routes([
+        web.get("/", index),
+        web.post("/", hello),
+        web.get("/todo", todo_index),
+        web.post("/todo", post_todo)
+    ])
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host=None, port=PORT)
