@@ -36,11 +36,6 @@ class DisplayMode(Enum):
     # Refreshes a region on the display as is the case for updating the UI.        
     PARTIAL = 2
 
-# FIXME: Remove once font dictionaries are stored in the UI state
-ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
-
-
-LOCAL_IP = 'N/A'
 
 def get_local_ip(interface_name='wlan0'):
     interfaces = netifaces.interfaces()
@@ -113,7 +108,7 @@ class EventKind(Enum):
 
 class Event(NamedTuple):
     kind: EventKind
-    target: Optional[int]
+    target: Optional[str]
     data: Any
 
 class Message(NamedTuple):
@@ -133,8 +128,8 @@ def centered_text_h(content: str, ctx: ImageDraw, font, voffset: int = 0):
 @dataclass(slots=True)
 class EventCtx:
     event_queue: asyncio.Queue
-    scheduled_tasks: dict[(int, int), asyncio.Task[Any]]
-    widget_id: Optional[int] = None
+    scheduled_tasks: dict[(str, int), asyncio.Task[Any]]
+    widget_id: Optional[str] = None
     task_id: int = 0
     changed: bool = False
 
@@ -142,7 +137,7 @@ class EventCtx:
         self.changed = True
 
     def spawn_task(self, coroutine: Coroutine[None, None, Any]):
-        async def dispatch_action(event_queue: asyncio.Queue, widget_id: int, task_id: int):
+        async def dispatch_action(event_queue: asyncio.Queue, widget_id: str, task_id: int):
             result = await coroutine
             await event_queue.put(Event(kind=EventKind.TASK, target=widget_id, data=(task_id, result)))
 
@@ -150,25 +145,6 @@ class EventCtx:
         task = asyncio.create_task(dispatch_action(self.event_queue, self.widget_id, task_id))
         self.scheduled_tasks[(self.widget_id, task_id)] = task
         self.task_id = task_id + 1
-
-
-@dataclass(slots=True)
-class Greeter:
-    name: str = "Welt"
-
-    def update(self, ctx: EventCtx, message: Message):
-        match message.kind:
-            case EventKind.UPDATE:
-                if self.name != message.data:
-                    self.name = message.data
-                    ctx.mark_changed()
-            case _:
-                pass
-
-    def view(self, ctx: ImageDraw, size: (int, int)):
-        (width, height) = size
-        ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
-        ctx.text((0, 0), f"Hallo {self.name}!", font_size = 24, fill = 0)
 
 
 @dataclass(slots=True)
@@ -320,10 +296,10 @@ async def ui_handler(event_queue: asyncio.Queue):
     display.set_mode(DisplayMode.FULL)
 
     ctx = EventCtx(event_queue=event_queue, scheduled_tasks=dict())
-    widgets: dict[int, (Any, (int, int, int, int))] = dict([
-        (0, (Clock(),   (0, 0, 400, 240))),
-        (1, (Weather(), (0, 240, 400, 240))),
-        (2, (Todo(),    (400, 0, 400, 480))),
+    widgets: dict[str, (Any, (int, int, int, int))] = dict([
+        ("clock",   (Clock(),   (0, 0, 400, 240))),
+        ("weather", (Weather(), (0, 240, 400, 240))),
+        ("todo",    (Todo(),    (400, 0, 400, 480))),
     ])
 
     for (widget_id, (widget, (x, y, width, height))) in widgets.items():
@@ -374,52 +350,37 @@ async def ui_handler(event_queue: asyncio.Queue):
         ctx.widget_id = None
         ctx.changed = False
 
-#def centered_text(draw: ImageDraw, text: str, font: str, left, top, right, bottom, padding_x, padding_y):
-
-
 
 async def web_server(event_queue: asyncio):
+    routes = web.RouteTableDef()
+
+    @routes.get("/")
     async def index(request):
         return web.Response(text='PiInk')
 
-    async def hello(request: web.Request):
-        name = await request.text()
-        await event_queue.put(Event(kind=EventKind.UPDATE, target=1, data=name))
-        await event_queue.put(Event(kind=EventKind.TASK, target=3, data=name))
-        return web.Response(text=f"Post received {name}")
+    @routes.get("/{controller}")
+    async def get_control(request: web.Request):
+        try:
+            controller = request.match_info["controller"]
+            path = f"../controller/{controller}.html"
 
-    async def todo_index(request: web.Request):
-        html = """
-        <!DOCTYPE html>
-        <html>
-            <head></head>
-            <body>
-                <form action="/todo" method="post">
-                    <select name="action">
-                        <option value="ADD">Add</option>
-                        <option value="DELETE">Delete</option>
-                    </select>
-                    <label for="value">
-                    <input id="value" name="value">
-                    <button type="submit">Send</button>
-                </form>
-            </body>
-        </html>
-        """
-        return web.Response(content_type="text/html", text=html)
+            with open(path, mode="r", encoding="utf-8") as file:
+                return web.Response(text=file.read(),
+                                    content_type="text/html")
+        except Exception:
+            raise web.HTTPNotFound()
 
-    async def post_todo(request: web.Request):
+    @routes.post("/{controller}")
+    async def post_control(request: web.Request):
         data = await request.post()
-        await event_queue.put(Event(kind=EventKind.UPDATE, target=2, data={"action": data["action"], "value": data["value"]}))
-        return web.HTTPFound(location='/todo')
+        controller = request.match_info["controller"]
+        await event_queue.put(Event(kind=EventKind.UPDATE,
+                                    target=controller,
+                                    data={"action": data["action"], "value": data["value"]}))
+        return web.HTTPFound(location=f"/{controller}")
 
     app = web.Application()
-    app.add_routes([
-        web.get("/", index),
-        web.post("/", hello),
-        web.get("/todo", todo_index),
-        web.post("/todo", post_todo)
-    ])
+    app.add_routes(routes)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host=None, port=PORT)

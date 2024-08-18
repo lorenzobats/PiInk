@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="theme-color" content="#e57dd4" />
+        <title>PiInk - Todo</title>
+    </head>
+    <body>
+        <form action="/todo" method="post">
+            <select name="action">
+                <option value="ADD">Add</option>
+                <option value="DELETE">Delete</option>
+            </select>
+            <label for="value">
+                <input id="value" name="value">
+                <button type="submit">Send</button>
+        </form>
+    </body>
+</html>
