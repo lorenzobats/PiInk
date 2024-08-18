@@ -21,6 +21,9 @@ import aiohttp
 from typing import Any, Coroutine, NamedTuple, Optional
 from dataclasses import dataclass, field
 import locale
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
+import random
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -149,94 +152,154 @@ class EventCtx:
 
 
 @dataclass(slots=True)
-class WeatherData:
-    temperature: int = 0
-    min: int = 0
-    max: int = 0
-    main: str = 'N/A'
-    desc: str = 'N/A'
-    weather_icon: str = 'N/A'
+class WeatherSummary:
+    temperature: float = 0.0
+    low: float = 0.0
+    high: float = 0.0
+    icon: str = "clearsky_polartwilight"
 
 
 @dataclass(slots=True)
 class Weather:
-    key: str
-    city: str
-    weather_icon_dict = {
-            'Thunderstorm': '../weather_icons/thunderstorm.bmp',
-            'Drizzle': '../weather_icons/drizzle.bmp',
-            'Rain': '../weather_icons/rain.bmp',
-            'Snow': '../weather_icons/snow.bmp',
-            'Clear': '../weather_icons/clear.bmp',
-            'Clouds': '../weather_icons/cloudy.bmp',
-            'Night': '../weather_icons/night.bmp',
+    lattitude: float = 52.520008
+    longitude: float = 13.404954
+    icon_aliases = {
+        # < == Excess s typo in API
+        "lightssleetshowersandthunder_day": "lightsleetshowersandthunder_day",
+        "lightssleetshowersandthunder_night": "lightsleetshowersandthunder_night",
+        "lightssnowshowersandthunder_day": "lightsnowshowersandthunder_day",
+        "lightssnowshowersandthunder_night": "lightsnowshowersandthunder_night",
+        # == >
     }
-    session: aiohttp.ClientSession
-    weather_data: WeatherData
-
-    def __init__(self):
-        self.session: aiohttp.ClientSession = None
-        self.weather_data = WeatherData()
-        try:
-            with open('../openweathermap.json', 'r') as file:
-                data = json.load(file)
-                self.city = data['city']
-                self.key = data['apiKey']
-        except:
-            print("openweathermap.json file not found.")
+    session: aiohttp.ClientSession = None
+    summary: WeatherSummary = None
+    time_series: dict[Any, Any] = None
 
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
             case EventKind.ADDED:
-                self.session = aiohttp.ClientSession()
+                self.session = aiohttp.ClientSession(
+                    base_url="https://api.met.no",
+                    headers={
+                        "User-Agent": "PiInk/1.0 github.com/lorenzobats/PiInk",
+                        "Accept": "application/json"
+                    },
+                )
+                self.time_series = {}
+                self.summary = WeatherSummary()
                 ctx.spawn_task(self.get_weather())
-                pass
             case EventKind.TASK:
-                data = message.data[1]
-                if self.weather_data != data:
-                    self.weather_data = data
-                    print(f'Weather changed {self.weather_data}')
+                now = time.gmtime()
+                today = f"{now.tm_year:04}-{now.tm_mon:02}-{now.tm_mday:02}"
+                (expiration, data) = message.data[1]
+
+                if data is not None:
+                    midnight = f"{today}T00:00:00Z"
+                    past_times = [key for key in self.time_series.keys() if key < midnight]
+
+                    for key in past_times:
+                        self.time_series.pop(key)
+
+                    for step in data:
+                        self.time_series[step["time"]] = step["data"]
+
+                if len(self.time_series) == 0:
+                    ctx.spawn_task(self.schedule_weather_update(expiration))
+                    return
+
+
+                key = f"{today}T{now.tm_hour:02}:{now.tm_min:02}:{now.tm_sec:02}Z"
+                temperature = next(self.time_series.values().__iter__())["instant"]["details"]["air_temperature"]
+                summary = WeatherSummary(temperature, temperature, temperature)
+
+                for (t, d) in filter(lambda s: s[0].startswith(today), self.time_series.items()):
+                    temperature = d["instant"]["details"]["air_temperature"]
+
+                    if temperature < summary.low:
+                        summary.low = temperature
+
+                    if summary.high < temperature:
+                        summary.high = temperature
+
+                    if t <= key:
+                        summary.temperature = temperature
+
+                        if "next_1_hours" in d:
+                            summary.icon = d["next_1_hours"]["summary"]["symbol_code"]
+                        elif "next_6_hours" in d:
+                            summary.icon = d["next_6_hours"]["summary"]["symbol_code"]
+                        elif "next_12_hours" in d:
+                            summary.icon = data["next_12_hours"]["summary"]["symbol_code"]
+
+                if self.summary != summary:
+                    self.summary = summary
+                    print(f'Weather changed {self.summary}')
                     ctx.mark_changed()
-                ctx.spawn_task(self.schedule_weather_update())
+
+                ctx.spawn_task(self.schedule_weather_update(now.tm_min, expiration))
             case _:
                 pass
 
-    async def schedule_weather_update(self):
-        await asyncio.sleep(10)
+    async def schedule_weather_update(self, time_minute: int, seconds: float):
+        seconds_until_full_hour = float((60 - time_minute) * 60)
+
+        if seconds_until_full_hour < seconds:
+            await asyncio.sleep(seconds_until_full_hour)
+            return (seconds - seconds_until_full_hour, None)
+            
+        await asyncio.sleep(seconds)
         return await self.get_weather()
 
     async def get_weather(self):
-        endpoint = 'https://api.openweathermap.org/data/2.5/weather'
-        async with self.session.get(f'{endpoint}?q={self.city}&appid={self.key}&lang=de') as response:
-            weather = await response.json()
-            weather_data = WeatherData(
-                        int(weather['main']['temp'] - 273),
-                        int(weather['main']['temp_min'] - 273),
-                        int(weather['main']['temp_max'] - 273),
-                        weather['weather'][0]['main'],
-                        weather['weather'][0]['description'],
-                        weather['weather'][0]['icon'])
-            return weather_data
+        endpoint = "/weatherapi/locationforecast/2.0/compact"
+        url = f"{endpoint}?lat={self.lattitude:.4f}&lon={self.longitude:.4f}"
+
+        try:
+            async with self.session.get(url) as response:
+                self.session.headers["If-Modified-Since"] = response.headers["Last-Modified"]
+                expires = response.headers["Expires"]
+                expiration_datetime = parsedate_to_datetime(expires)
+                expiration_in_seconds = (expiration_datetime - datetime.now(timezone.utc)).total_seconds()
+
+                if response.status == 200:
+                    try:
+                        weather = await response.json()
+                        time_series = weather["properties"]["timeseries"]
+                        return (expiration_in_seconds, time_series)
+                    except Exception as e:
+                        print(e)
+
+                return (expiration_in_seconds, None)
+        except Exception as e:
+            print(e)
+            return (float(random.randrange(10 * 60, 30 * 60)), None)
+
+    def resolve_weather_icon(self, icon: str):
+        # Map polar twilight to day and night variant
+        if icon != "clearsky_polartwilight" and icon.endswith("_polartwilight"):
+            icon = icon.removesuffix("polartwilight")
+            now = time.localtime()
+
+            if 6 <= now.tm_hour and now.tm_hour <= 18:
+                icon += "day"
+            else:
+                icon += "night"
+
+        return self.icon_aliases.get(icon, icon)
 
     def view(self, ctx: ImageDraw, size: (int, int)):
         (width, height) = size
         ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=3)
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
         font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
-        ctx.text((130, 50), f'{self.weather_data.temperature}°C', font=font36)
-        ctx.text((130, 90), f'{self.weather_data.desc}', font=font24)
-        ctx.text((130, 120), f'H: {self.weather_data.max}°C')
-        ctx.text((130, 150), f'T: {self.weather_data.min}°C', font=font24)
+        ctx.text((130, 50), f'{round(self.summary.temperature)}°C', font=font36)
+        # ctx.text((130, 90), f'{self.weather_data.desc}', font=font24)
+        ctx.text((130, 120), f"H: {round(self.summary.high)}° // T: {round(self.summary.low)}°", font=font24)
 
-        if self.weather_icon_dict.get(self.weather_data.main):
-            current_time = time.localtime()
-            weather_icon = Image.open(self.weather_icon_dict.get('Clear'))
-            if self.weather_data.main == 'Clear' and (current_time.tm_hour < 6 or current_time.tm_hour > 18):
-                weather_icon = Image.open(self.weather_icon_dict.get('Night'))
-            else:
-                weather_icon = Image.open(self.weather_icon_dict.get(self.weather_data.main))
-            weather_icon.thumbnail((80, 80))
-            ctx.bitmap((20, 80), weather_icon)
+        icon_name = self.resolve_weather_icon(self.summary.icon)
+        weather_icon = Image.open(f"../weather_icons/{icon_name}.bmp")
+        weather_icon.thumbnail((80, 80))
+        ctx.bitmap((20, 80), weather_icon)
 
 
 @dataclass(slots=True)
