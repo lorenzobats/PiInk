@@ -20,6 +20,7 @@ from aiohttp import web
 import aiohttp
 from typing import Any, Coroutine, NamedTuple, Optional
 from dataclasses import dataclass, field
+import locale
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -276,7 +277,11 @@ class Clock:
 
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
-            case EventKind.ADDED | EventKind.TASK:
+            case EventKind.ADDED:
+                locale.setlocale(locale.LC_TIME, "")
+                ctx.mark_changed()
+                ctx.spawn_task(asyncio.sleep(60 - min(time.localtime().tm_sec, 60)))
+            case EventKind.TASK:
                 ctx.mark_changed()
                 ctx.spawn_task(asyncio.sleep(60 - min(time.localtime().tm_sec, 60)))
             case _:
@@ -289,7 +294,7 @@ class Clock:
         font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
         ctx.text((5, 5), f'{LOCAL_IP}', font=font24)
         centered_text_h(time.strftime('%H:%M'), ctx, font=font36, voffset=70)
-        centered_text_h(time.strftime('%A, %d.%m.%y'), ctx, font=font24, voffset=110)
+        centered_text_h(time.strftime('%A, %x'), ctx, font=font24, voffset=110)
 
 async def ui_handler(event_queue: asyncio.Queue):
     display = Display(epd=epd7in5_V2.EPD(), image=Image.new("1", (800, 480), 255))
