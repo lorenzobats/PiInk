@@ -2,6 +2,7 @@
 # -*- coding:utf-8 -*-
 import sys
 import os
+import netifaces
 picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
 libdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
 
@@ -37,6 +38,20 @@ class DisplayMode(Enum):
 
 # FIXME: Remove once font dictionaries are stored in the UI state
 ImageDraw.ImageDraw.font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
+
+
+LOCAL_IP = 'N/A'
+
+def get_local_ip(interface_name='wlan0'):
+    interfaces = netifaces.interfaces()
+    if interface_name in interfaces:
+        adr = netifaces.ifaddresses(interface_name)
+        if netifaces.AF_INET in adr:
+            ip_info = adr[netifaces.AF_INET][0]
+            print(ip_info['addr'])
+            return ip_info['addr']
+
+LOCAL_IP = get_local_ip()
 
 class Display(NamedTuple):
     epd: epd7in5_V2.EPD
@@ -257,7 +272,8 @@ class Todo:
                 ctx.mark_changed()
             case EventKind.UPDATE:
                 if message.data['action'] == "ADD":
-                    self.todos.append(message.data['value'])
+                    if len(self.todos) < 10:
+                        self.todos.append(message.data['value'])
                 if message.data['action'] == "DELETE":
                     try:
                         self.todos.pop(int(message.data['value']))
@@ -270,15 +286,18 @@ class Todo:
         (width, height) = size
         ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=3)
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
-        font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        font28 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 28)
         centered_text_h('Todos', ctx, font36)
         for idx, todo in enumerate(self.todos):
-            ctx.text((30, 50 + idx * 20), f'{idx}. {todo}', font=font24)
+            todo = f'[{idx}] {todo}'
+            text_length = ctx.textlength(todo, font28)
+            ctx.text((30, 70 + idx * 32), todo, font=font28)
 
 
 
 @dataclass(slots=True)
 class Clock:
+
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
             case EventKind.ADDED | EventKind.TASK:
@@ -292,6 +311,7 @@ class Clock:
         ctx.rectangle((0, 0, width, height), fill=255, outline=0, width=2)
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
         font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
+        ctx.text((5, 5), f'{LOCAL_IP}', font=font24)
         centered_text_h(time.strftime('%H:%M'), ctx, font=font36, voffset=70)
         centered_text_h(time.strftime('%A, %d.%m.%y'), ctx, font=font24, voffset=110)
 
