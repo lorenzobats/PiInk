@@ -21,6 +21,7 @@ import aiohttp
 from typing import Any, Coroutine, NamedTuple, Optional
 from dataclasses import dataclass, field
 import locale
+import random
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -153,44 +154,82 @@ class WeatherData:
     temperature: int = 0
     min: int = 0
     max: int = 0
-    main: str = 'N/A'
-    desc: str = 'N/A'
-    weather_icon: str = 'N/A'
+    code: int =  0
+    is_day: bool = True
 
 
 @dataclass(slots=True)
 class Weather:
-    key: str
-    city: str
-    weather_icon_dict = {
-            'Thunderstorm': '../weather_icons/thunderstorm.bmp',
-            'Drizzle': '../weather_icons/drizzle.bmp',
-            'Rain': '../weather_icons/rain.bmp',
-            'Snow': '../weather_icons/snow.bmp',
-            'Clear': '../weather_icons/clear.bmp',
-            'Clouds': '../weather_icons/cloudy.bmp',
-            'Night': '../weather_icons/night.bmp',
+    latitude: float = 52.520008
+    longitude: float = 13.404954
+    icon_by_code = {
+        0: 'sun',
+        1: 'cloudy',
+        2: 'cloudy',
+        3: 'cloudy',
+        45: 'fog',
+        48: 'fog',
+        51: 'drizzle',
+        53: 'drizzle',
+        55: 'drizzle',
+        56: 'drizzle',
+        57: 'drizzle',
+        80: 'rain',
+        81: 'rain',
+        82: 'rain',
+        61: 'rain',
+        63: 'rain',
+        65: 'rain',
+        66: 'rain',
+        67: 'rain',
+        77: 'snow',
+        85: 'snow',
+        86: 'snow',
+        71: 'snow',
+        73: 'snow',
+        75: 'snow',
+        95: 'thunderstorm',
+        96: 'thunderstorm',
+        99: 'thunderstorm',
     }
-    session: aiohttp.ClientSession
-    weather_data: WeatherData
-
-    def __init__(self):
-        self.session: aiohttp.ClientSession = None
-        self.weather_data = WeatherData()
-        try:
-            with open('../openweathermap.json', 'r') as file:
-                data = json.load(file)
-                self.city = data['city']
-                self.key = data['apiKey']
-        except:
-            print("openweathermap.json file not found.")
+    desc_by_code = {
+        0: 'Klarer Himmel',
+        1: 'Meist klar',
+        2: 'Teilweise bewölkt',
+        3: 'Bewölkt',
+        45: 'Nebel',
+        48: 'Raureif',
+        51: 'Leichter Nieselregen',
+        53: 'Nieselregen',
+        55: 'Starker Nieselregen',
+        56: 'Leichter eisiger Nieselregen',
+        57: 'Eisiger Nieselregen',
+        80: 'Leichter Regenschauer',
+        81: 'Regenschauer',
+        82: 'Starker Regenschauer',
+        61: 'Leichter Regen',
+        63: 'Regen',
+        65: 'Starker Regen',
+        66: 'Leichter Eisregen',
+        67: 'Eisregen',
+        77: 'Schneekörner',
+        85: 'Leichter Schneeschauer',
+        86: 'Schneeschauer',
+        71: 'Leichter Schnee',
+        73: 'Schnee',
+        75: 'Starker Schnee',
+        95: 'Gewitter',
+        96: 'Leichtes Gewitter mit Hagel',
+        99: 'Gewitter mit Hagel',
+    }
+    session: aiohttp.ClientSession = None
+    weather_data: WeatherData = field(default_factory=WeatherData)
 
     def update(self, ctx: EventCtx, message: Message):
         match message.kind:
             case EventKind.ADDED:
                 self.session = aiohttp.ClientSession()
                 ctx.spawn_task(self.get_weather())
-                pass
             case EventKind.TASK:
                 data = message.data[1]
                 if self.weather_data != data:
@@ -198,24 +237,35 @@ class Weather:
                     print(f'Weather changed {self.weather_data}')
                     ctx.mark_changed()
                 ctx.spawn_task(self.schedule_weather_update())
+            case EventKind.UPDATE:
+                self.latitude = float(message.data["latitude"])
+                self.longitude = float(message.data["longitude"])
+                ctx.spawn_task(self.get_weather())
             case _:
                 pass
 
     async def schedule_weather_update(self):
-        await asyncio.sleep(10)
+        # https://open-meteo.com/en/docs/model-updates
+        # Open-Meteo has sadly no cache invalidation headers yet.
+        # Current conditions are based on 15-minutely weather model data.
+        minutes = random.randint(15, 25)
+        await asyncio.sleep(minutes * 60)
         return await self.get_weather()
 
     async def get_weather(self):
-        endpoint = 'https://api.openweathermap.org/data/2.5/weather'
-        async with self.session.get(f'{endpoint}?q={self.city}&appid={self.key}&lang=de') as response:
+        endpoint = 'https://api.open-meteo.com/v1/forecast'
+        current = 'current=temperature_2m,is_day,weather_code'
+        daily = 'daily=temperature_2m_max,temperature_2m_min&forecast_days=1'
+        url = f'{endpoint}?latitude={self.latitude}&longitude={self.longitude}&{current}&{daily}&timezone=auto'
+
+        async with self.session.get(url) as response:
             weather = await response.json()
             weather_data = WeatherData(
-                        int(weather['main']['temp'] - 273),
-                        int(weather['main']['temp_min'] - 273),
-                        int(weather['main']['temp_max'] - 273),
-                        weather['weather'][0]['main'],
-                        weather['weather'][0]['description'],
-                        weather['weather'][0]['icon'])
+                        round(weather['current']['temperature_2m']),
+                        round(weather['daily']['temperature_2m_min'][0]),
+                        round(weather['daily']['temperature_2m_max'][0]),
+                        weather['current']['weather_code'],
+                        weather['current']['is_day'] == 1)
             return weather_data
 
     def view(self, ctx: ImageDraw, size: (int, int)):
@@ -224,19 +274,18 @@ class Weather:
         font36 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 36)
         font24 = ImageFont.truetype('../fonts/FiraMono-Regular.ttf', 24)
         ctx.text((130, 50), f'{self.weather_data.temperature}°C', font=font36)
-        ctx.text((130, 90), f'{self.weather_data.desc}', font=font24)
-        ctx.text((130, 120), f'H: {self.weather_data.max}°C')
+        ctx.text((130, 90), self.desc_by_code[self.weather_data.code], font=font24)
+        ctx.text((130, 120), f'H: {self.weather_data.max}°C', font=font24)
         ctx.text((130, 150), f'T: {self.weather_data.min}°C', font=font24)
 
-        if self.weather_icon_dict.get(self.weather_data.main):
-            current_time = time.localtime()
-            weather_icon = Image.open(self.weather_icon_dict.get('Clear'))
-            if self.weather_data.main == 'Clear' and (current_time.tm_hour < 6 or current_time.tm_hour > 18):
-                weather_icon = Image.open(self.weather_icon_dict.get('Night'))
-            else:
-                weather_icon = Image.open(self.weather_icon_dict.get(self.weather_data.main))
-            weather_icon.thumbnail((80, 80))
-            ctx.bitmap((20, 80), weather_icon)
+        icon = self.icon_by_code[self.weather_data.code]
+
+        if icon == 'sun' and not self.weather_data.is_day:
+            icon = 'night'
+
+        weather_icon = Image.open(f'../weather_icons/{icon}.bmp')
+        weather_icon.thumbnail((80, 80))
+        ctx.bitmap((20, 80), weather_icon)
 
 
 @dataclass(slots=True)
@@ -257,6 +306,7 @@ class Todo:
                     except:
                         pass
                 ctx.mark_changed()
+            case _:
                 pass
 
     def view(self, ctx: ImageDraw, size: (int, int)):
@@ -381,7 +431,7 @@ async def web_server(event_queue: asyncio):
         controller = request.match_info["controller"]
         await event_queue.put(Event(kind=EventKind.UPDATE,
                                     target=controller,
-                                    data={"action": data["action"], "value": data["value"]}))
+                                    data=data))
         return web.HTTPFound(location=f"/{controller}")
 
     app = web.Application()
